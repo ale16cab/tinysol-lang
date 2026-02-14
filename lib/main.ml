@@ -521,6 +521,50 @@ let faucet (a : addr) (n : int) (st : sysstate) : sysstate =
     { st with accounts = bind a as' st.accounts; active = a::st.active }
 
 
+let get_state_variables (Contract(_,_,vdl,_)) : string list =
+  let state_vars = List.map (fun (vd : var_decl) -> vd.name) vdl in
+  print_endline ("[LOG] State variables: " ^ String.concat ", " state_vars);
+  state_vars
+
+let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
+  let rec aux cmd state_vars =
+    match cmd with
+    | Skip ->
+        print_endline "[LOG] Command: Skip"; false
+    | Assign (x, _) ->
+        let result = List.mem x state_vars in
+        print_endline ("[LOG] Command: Assign " ^ x ^ " - Access state: " ^ string_of_bool result);
+        result
+    | Decons (xs, _) ->
+        let result = List.exists (fun x_opt -> match x_opt with
+          | Some x -> List.mem x state_vars
+          | None -> false) xs in
+        print_endline ("[LOG] Command: Decons - Access state: " ^ string_of_bool result);
+        result
+    | MapW (x, _, _) ->
+        let result = List.mem x state_vars in
+        print_endline ("[LOG] Command: MapW " ^ x ^ " - Access state: " ^ string_of_bool result);
+        result
+    | Seq (c1, c2) ->
+        print_endline "[LOG] Command: Seq";
+        aux c1 state_vars || aux c2 state_vars
+    | If (_, c1, c2) ->
+        print_endline "[LOG] Command: If";
+        aux c1 state_vars || aux c2 state_vars
+    | Block (decls, c) ->
+        let local_vars = List.map (fun decl -> decl.name) decls in
+        let filtered_state_vars = List.filter (fun x -> not (List.mem x local_vars)) state_vars in
+        print_endline ("[LOG] Command: Block - Local vars: " ^ String.concat ", " local_vars);
+        aux c filtered_state_vars
+    | ExecBlock c ->
+        print_endline "[LOG] Command: ExecBlock";
+        aux c state_vars
+    | _ ->
+        print_endline "[LOG] Command: Other"; false
+  in
+  let result = aux c state_vars in
+  print_endline ("[LOG] Final result for accede_allo_stato: " ^ string_of_bool result);
+  result
 (******************************************************************************)
 (* Executes steps of a transaction in a system state, returning a trace       *)
 (******************************************************************************)
@@ -555,7 +599,9 @@ let exec_tx (n_steps : int) (tx: transaction) (st : sysstate) : (sysstate,string
     (* executes the called function *)
     match to_state.code with
     | None -> Error "Called address is not a contract"
-    | Some src -> (match find_fun_in_contract src tx.txfun with
+    | Some src -> 
+      let state_vars = get_state_variables src in 
+      (match find_fun_in_contract src tx.txfun with
       | None when (not deploy) -> 
         Error ("Contract at address " ^ tx.txto ^ " has no function named " ^ tx.txfun)
       | None -> (* deploy a contract with no constructor (non-payable) *)
@@ -570,7 +616,9 @@ let exec_tx (n_steps : int) (tx: transaction) (st : sysstate) : (sysstate,string
             active = tx.txto :: st.active }
       | Some (Proc(_,xl,c,_,m,_))
       | Some (Constr(xl,c,m)) ->
-        if m<>Payable && tx.txvalue>0 then 
+        if m = Pure && accede_allo_stato c state_vars then
+          Error "Reverted: Pure function cannot access state variables"
+        else if m<>Payable && tx.txvalue>0 then 
             Error "sending ETH to a non-payable function"
         else
           let xl',vl' =
