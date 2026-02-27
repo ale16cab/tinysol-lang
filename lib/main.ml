@@ -9,7 +9,47 @@ open Utils
 
 exception TypeError of string
 exception NoRuleApplies
+let get_state_variables (Contract(_,_,vdl,_)) : string list =
+  let state_vars = List.map (fun (vd : var_decl) -> vd.name) vdl in
+  (*print_endline ("[LOG] State variables: " ^ String.concat ", " state_vars);*)
+  state_vars
 
+let rec accede_expr (e : expr) (state_vars : ide list) : bool =
+  match e with
+  | Var x -> List.mem x state_vars
+  | MapR (e1, e2) -> accede_expr e1 state_vars || accede_expr e2 state_vars
+  | This | BlockNum | BalanceOf _ -> true
+  | Not e | IntCast e | UintCast e | AddrCast e | PayableCast e | EnumCast (_, e) | ContractCast (_, e) -> 
+      accede_expr e state_vars
+  | And (e1, e2) | Or (e1, e2) | Add (e1, e2) | Sub (e1, e2) | Mul (e1, e2) | Eq (e1, e2) | Neq (e1, e2) | Leq (e1, e2) | Lt (e1, e2) | Geq (e1, e2) | Gt (e1, e2) ->
+      accede_expr e1 state_vars || accede_expr e2 state_vars
+  | IfE (e1, e2, e3) -> accede_expr e1 state_vars || accede_expr e2 state_vars || accede_expr e3 state_vars
+  | FunCall (e_to, _, e_val, e_args) -> accede_expr e_to state_vars || accede_expr e_val state_vars || List.exists (fun e -> accede_expr e state_vars) e_args
+  | _ -> false
+
+  let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
+  let rec aux cmd state_vars =
+    match cmd with
+    | Skip -> false
+    | Assign (x, e) -> List.mem x state_vars || accede_expr e state_vars
+    | MapW (x, ek, ev) -> List.mem x state_vars || accede_expr ek state_vars || accede_expr ev state_vars
+    | Seq (c1, c2) -> aux c1 state_vars || aux c2 state_vars
+    | If (e, c1, c2) -> accede_expr e state_vars || aux c1 state_vars || aux c2 state_vars
+    
+    (* CASO RETURN ESPLICITO *)
+    | Return el -> List.exists (fun e -> accede_expr e state_vars) el
+    
+    | Block (decls, c) ->
+        let local_vars = List.map (fun decl -> decl.name) decls in
+        let filtered_state_vars = List.filter (fun x -> not (List.mem x local_vars)) state_vars in
+        aux c filtered_state_vars
+    | _ -> false
+  in
+    let result = aux c state_vars in
+    (*print_endline ("[LOG] Final result for accede_allo_stato: " ^ string_of_bool result);*)
+  result
+
+  
 let rec step_expr (e,st) = match e with
   | e when is_val e -> raise NoRuleApplies
 
@@ -249,6 +289,14 @@ let rec step_expr (e,st) = match e with
     let to_state  = 
       { (st.accounts txto) with balance = (st.accounts txto).balance + txvalue } in 
     let fdecl = Option.get (find_fun_in_sysstate st txto f) in  
+    (match to_state.code with
+      | Some src ->
+        let state_vars = get_state_variables src in
+        (match fdecl with
+          | Proc(_,_,c,_,Pure,_) when accede_allo_stato c state_vars ->
+            failwith "Reverted: Pure function cannot access state"
+          | _ -> ())
+      | None -> ());
     (* setup new callstack frame *)
     let xl = get_var_decls_from_fun fdecl in
     let xl',vl' =
@@ -417,6 +465,18 @@ and step_cmd = function
         let to_state  = 
           { (st.accounts txto) with balance = (st.accounts txto).balance + txvalue } in 
         let fdecl = Option.get (find_fun_in_sysstate st txto f) in  
+        let is_pure_accessing_state = 
+          match to_state.code with
+          | Some src ->
+            let state_vars = get_state_variables src in
+            (match fdecl with
+              | Proc(_, _, c, _, Pure, _) -> accede_allo_stato c state_vars
+              | _ -> false)
+          | None -> false
+        in
+        if is_pure_accessing_state then
+          Reverted "Reverted: Pure function cannot access state"
+        else
         (* setup new stack frame TODO *)
         let xl = get_var_decls_from_fun fdecl in
         let xl',vl' =
@@ -521,6 +581,9 @@ let faucet (a : addr) (n : int) (st : sysstate) : sysstate =
     { st with accounts = bind a as' st.accounts; active = a::st.active }
 
 
+
+
+
 (******************************************************************************)
 (* Executes steps of a transaction in a system state, returning a trace       *)
 (******************************************************************************)
@@ -555,7 +618,9 @@ let exec_tx (n_steps : int) (tx: transaction) (st : sysstate) : (sysstate,string
     (* executes the called function *)
     match to_state.code with
     | None -> Error "Called address is not a contract"
-    | Some src -> (match find_fun_in_contract src tx.txfun with
+    | Some src -> 
+      let state_vars = get_state_variables src in 
+      (match find_fun_in_contract src tx.txfun with
       | None when (not deploy) -> 
         Error ("Contract at address " ^ tx.txto ^ " has no function named " ^ tx.txfun)
       | None -> (* deploy a contract with no constructor (non-payable) *)
@@ -570,7 +635,10 @@ let exec_tx (n_steps : int) (tx: transaction) (st : sysstate) : (sysstate,string
             active = tx.txto :: st.active }
       | Some (Proc(_,xl,c,_,m,_))
       | Some (Constr(xl,c,m)) ->
-        if m<>Payable && tx.txvalue>0 then 
+        (* if m = Pure &&  *)
+        if m = Pure && accede_allo_stato c state_vars then
+          Error "Reverted: Pure function cannot access state variables"
+        else if m<>Payable && tx.txvalue>0 then 
             Error "sending ETH to a non-payable function"
         else
           let xl',vl' =

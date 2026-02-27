@@ -60,7 +60,7 @@ let%test "test_mutability_3" = test_exec_tx
       function g() public { x = this.f(); }
   }"
   ["0xA:0xC.g()"] 
-  [("x==0");] (* f cannot be declared as pure because it reads the state *)
+  [("x==1");] (* f cannot be declared as pure because it reads the state *)
 
 let%test "test_mutability_4" = test_exec_tx
   "contract C {
@@ -85,7 +85,12 @@ let%test "test_mutability_6" = test_exec_tx
   }"
   ["0xA:0xC.f{value:0}()"] 
   [("x==0");] (* msg.value can only be used in payable functions *)
-
+let%test "test_mutability_7" = test_exec_tx
+  "contract C {
+    function f(address a) public pure returns(uint) { return a.balance + 100; }
+  }"
+  ["0xA:0xC.f(\"0xC\")"]
+  [("address(this).balance == 100");]
 let%test "test_receive_1" = test_exec_fun
   "contract C { 
       uint x; 
