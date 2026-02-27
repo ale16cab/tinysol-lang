@@ -11,7 +11,7 @@ exception TypeError of string
 exception NoRuleApplies
 let get_state_variables (Contract(_,_,vdl,_)) : string list =
   let state_vars = List.map (fun (vd : var_decl) -> vd.name) vdl in
-  print_endline ("[LOG] State variables: " ^ String.concat ", " state_vars);
+  (*print_endline ("[LOG] State variables: " ^ String.concat ", " state_vars);*)
   state_vars
 
 let rec accede_expr (e : expr) (state_vars : ide list) : bool =
@@ -45,7 +45,7 @@ let rec accede_expr (e : expr) (state_vars : ide list) : bool =
     | _ -> false
   in
     let result = aux c state_vars in
-    print_endline ("[LOG] Final result for accede_allo_stato: " ^ string_of_bool result);
+    (*print_endline ("[LOG] Final result for accede_allo_stato: " ^ string_of_bool result);*)
   result
 
   
