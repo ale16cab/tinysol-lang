@@ -293,16 +293,14 @@ let rec step_expr (e,st) = match e with
     let to_state  = 
       { (st.accounts txto) with balance = (st.accounts txto).balance + txvalue } in 
     let fdecl = Option.get (find_fun_in_sysstate st txto f) in  
-
-    let (to_state : account_state) = st.accounts txto in
-      (match to_state.code with
-        | Some src ->
-          let state_vars = get_state_variables src in
-            (match fdecl with
-              | Proc(_, _, c, _, Pure, _) when accede_allo_stato c state_vars ->
-                failwith "Reverted: Pure function cannot access state"
-              | _ -> ())
-        | None -> ());
+    (match to_state.code with
+      | Some src ->
+        let state_vars = get_state_variables src in
+        (match fdecl with
+          | Proc(_, _, c, _, Pure, _) when accede_allo_stato c state_vars ->
+            failwith "Reverted: Pure function cannot access state"
+          | _ -> ())
+      | None -> ());
     (* setup new callstack frame *)
     let xl = get_var_decls_from_fun fdecl in
     let xl',vl' =
@@ -471,15 +469,18 @@ and step_cmd = function
         let to_state  = 
           { (st.accounts txto) with balance = (st.accounts txto).balance + txvalue } in 
         let fdecl = Option.get (find_fun_in_sysstate st txto f) in  
-          (match to_state.code with
-            | Some src ->
-              let state_vars = get_state_variables src in
-              (match fdecl with
-                | Proc(_, _, c, _, Pure, _) when accede_allo_stato c state_vars ->
-                    Reverted "Reverted: Pure function cannot access state"
-                | _ -> ())
-            | None -> ());
-        let (to_state : account_state) = st.accounts txto in
+        let is_pure_accessing_state = 
+          match to_state.code with
+          | Some src ->
+            let state_vars = get_state_variables src in
+            (match fdecl with
+              | Proc(_, _, c, _, Pure, _) -> accede_allo_stato c state_vars
+              | _ -> false)
+          | None -> false
+        in
+        if is_pure_accessing_state then
+          Reverted "Reverted: Pure function cannot access state"
+        else
         (* setup new stack frame TODO *)
         let xl = get_var_decls_from_fun fdecl in
         let xl',vl' =
