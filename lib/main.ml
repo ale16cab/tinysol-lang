@@ -14,45 +14,40 @@ let get_state_variables (Contract(_,_,vdl,_)) : string list =
   print_endline ("[LOG] State variables: " ^ String.concat ", " state_vars);
   state_vars
 
+let rec accede_expr (e : expr) (state_vars : ide list) : bool =
+  match e with
+  | Var x -> List.mem x state_vars
+  | MapR (e1, e2) -> accede_expr e1 state_vars || accede_expr e2 state_vars
+  | BalanceOf e | Not e | IntCast e | UintCast e | AddrCast e | PayableCast e | EnumCast (_, e) | ContractCast (_, e) -> 
+      accede_expr e state_vars
+  | And (e1, e2) | Or (e1, e2) | Add (e1, e2) | Sub (e1, e2) | Mul (e1, e2) | Eq (e1, e2) | Neq (e1, e2) | Leq (e1, e2) | Lt (e1, e2) | Geq (e1, e2) | Gt (e1, e2) ->
+      accede_expr e1 state_vars || accede_expr e2 state_vars
+  | IfE (e1, e2, e3) -> accede_expr e1 state_vars || accede_expr e2 state_vars || accede_expr e3 state_vars
+  | FunCall (e_to, _, e_val, e_args) -> accede_expr e_to state_vars || accede_expr e_val state_vars || List.exists (fun e -> accede_expr e state_vars) e_args
+  | _ -> false
+
   let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
   let rec aux cmd state_vars =
     match cmd with
-    | Skip ->
-        print_endline "[LOG] Command: Skip"; false
-    | Assign (x, _) ->
-        let result = List.mem x state_vars in
-        print_endline ("[LOG] Command: Assign " ^ x ^ " - Access state: " ^ string_of_bool result);
-        result
-    | Decons (xs, _) ->
-        let result = List.exists (fun x_opt -> match x_opt with
-          | Some x -> List.mem x state_vars
-          | None -> false) xs in
-        print_endline ("[LOG] Command: Decons - Access state: " ^ string_of_bool result);
-        result
-    | MapW (x, _, _) ->
-        let result = List.mem x state_vars in
-        print_endline ("[LOG] Command: MapW " ^ x ^ " - Access state: " ^ string_of_bool result);
-        result
-    | Seq (c1, c2) ->
-        print_endline "[LOG] Command: Seq";
-        aux c1 state_vars || aux c2 state_vars
-    | If (_, c1, c2) ->
-        print_endline "[LOG] Command: If";
-        aux c1 state_vars || aux c2 state_vars
+    | Skip -> false
+    | Assign (x, e) -> List.mem x state_vars || accede_expr e state_vars
+    | MapW (x, ek, ev) -> List.mem x state_vars || accede_expr ek state_vars || accede_expr ev state_vars
+    | Seq (c1, c2) -> aux c1 state_vars || aux c2 state_vars
+    | If (e, c1, c2) -> accede_expr e state_vars || aux c1 state_vars || aux c2 state_vars
+    
+    (* CASO RETURN ESPLICITO *)
+    | Return el -> List.exists (fun e -> accede_expr e state_vars) el
+    
     | Block (decls, c) ->
         let local_vars = List.map (fun decl -> decl.name) decls in
         let filtered_state_vars = List.filter (fun x -> not (List.mem x local_vars)) state_vars in
-        print_endline ("[LOG] Command: Block - Local vars: " ^ String.concat ", " local_vars);
         aux c filtered_state_vars
-    | ExecBlock c ->
-        print_endline "[LOG] Command: ExecBlock";
-        aux c state_vars
-    | _ ->
-        print_endline "[LOG] Command: Other"; false
+    | _ -> false
   in
-  let result = aux c state_vars in
-  print_endline ("[LOG] Final result for accede_allo_stato: " ^ string_of_bool result);
+    let result = aux c state_vars in
+    print_endline ("[LOG] Final result for accede_allo_stato: " ^ string_of_bool result);
   result
+
   
 let rec step_expr (e,st) = match e with
   | e when is_val e -> raise NoRuleApplies
