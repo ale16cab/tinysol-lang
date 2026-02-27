@@ -60,7 +60,7 @@ let%test "test_mutability_2" = test_exec_tx
   [("x==0");] (* f cannot be declared as view because it (potentially) modifies the state *)
 
 *)
-(*
+
 let%test "test_mutability_3" = test_exec_tx
   "
   contract C {
@@ -70,7 +70,7 @@ let%test "test_mutability_3" = test_exec_tx
   }"
   ["0xA:0xC.g()"] 
   [("x==1");] (* f cannot be declared as pure because it reads the state *)
-*)
+
   let%test "test_mutability_3b" = test_exec_tx
   "
   contract C {
