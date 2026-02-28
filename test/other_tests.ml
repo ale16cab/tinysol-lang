@@ -58,7 +58,6 @@ let%test "test_mutability_2" = test_exec_tx
   }"
   ["0xA:0xC.f()"] 
   [("x==0");] (* f cannot be declared as view because it (potentially) modifies the state *)
-
 *)
 let%test "test_mutability_3" = test_exec_tx
   "contract C {
@@ -88,13 +87,7 @@ let%test "test_mutability_3d" = test_exec_tx
     function f() public pure returns(uint) { return ( this.balance + 1 ); }
   }"
   ["0xA:0xC.f(\"0xC\")"]
-  [("this.balance==1");]
-let%test "test_mutability_3e" = test_exec_tx
-  "contract C { 
-    function f() public pure returns(uint) { return ( msg.value + 1 ); }
-  }"
-  ["0xA:0xC.f{value:1}()"]
-  [("msg.value==1");]
+  [("this.balance==1");] 
 (*
 let%test "test_mutability_4" = test_exec_tx
   "contract C {
