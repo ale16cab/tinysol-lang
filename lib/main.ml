@@ -34,6 +34,7 @@ let rec accede_expr (e : expr) (state_vars : ide list) : bool =
       | Seq (c1, c2) -> aux c1 state_vars || aux c2 state_vars
       | If (e, c1, c2) -> accede_expr e state_vars || aux c1 state_vars || aux c2 state_vars
       | Send (ercv, eamt) -> accede_expr ercv state_vars || accede_expr eamt state_vars
+      | Req e -> accede_expr e state_vars
       (* CASO RETURN ESPLICITO *)
       | Return el -> List.exists (fun e -> accede_expr e state_vars) el
       | Block (decls, c) ->
