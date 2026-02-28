@@ -88,6 +88,13 @@ let%test "test_mutability_3d" = test_exec_tx
   }"
   ["0xA:0xC.f(\"0xC\")"]
   [("this.balance==1");] 
+let%test "test_mutability_3e" = test_exec_tx 
+  "contract C { 
+    address a = \"0xC\";
+    function f() public pure returns(uint) { return ( a.balance + 100 ); }
+  }"
+  ["0xA:0xC.f()"]
+  [("a.balance>=0");] 
 (*
 let%test "test_mutability_4" = test_exec_tx
   "contract C {
