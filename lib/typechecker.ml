@@ -75,6 +75,8 @@ exception EnumOptionNotFound of ide * ide * ide
 exception EnumDupName of ide
 exception EnumDupOption of ide * ide
 exception MapInLocalDecl of ide * ide
+(* new exception for checking the mutability of functions that indicates the type of error with a message*)
+exception MutabilityError of ide * ide * string
 
 let logfun f s = "(" ^ f ^ ")\t" ^ s 
 
@@ -95,6 +97,7 @@ let string_of_typecheck_error = function
 | EnumDupName x -> "enum " ^ x ^ " is declared multiple times"
 | EnumDupOption (x,o) -> "enum option " ^ o ^ " is declared multiple times in enum " ^ x
 | MapInLocalDecl (f,x) -> logfun f "mapping " ^ x ^ " not admitted in local declaration" 
+| MutabilityError (f,x,msg) -> logfun f ("mutability error: " ^ x ^ " - " ^ msg)
 | ex -> Printexc.to_string ex
 
 let exprtype_of_decltype = function
@@ -463,6 +466,115 @@ let rec typecheck_cmd (f : ide) (edl : enum_decl list) (vdl : all_var_decls) = f
 
     | Return(_) -> failwith "TODO: Return"
 
+let rec check_msg_value_expr f = function
+  | Var "msg.value" -> 
+      Error [MutabilityError (f, "msg.value", "can be accessed only in payable functions")]
+      
+  | Add (e1, e2) | Sub (e1, e2) | Mul (e1, e2) | Div (e1, e2) 
+  | Eq (e1, e2) | Neq (e1, e2) | Lt (e1, e2) | Leq (e1, e2) | Gt (e1, e2) | Geq (e1, e2)
+  | And (e1, e2) | Or (e1, e2) | MapR (e1, e2) -> 
+      (check_msg_value_expr f e1) >> (check_msg_value_expr f e2)
+  | Not e | IntCast e | UintCast e | AddrCast e | PayableCast e 
+  | EnumCast (_, e) | ContractCast (_, e) | BalanceOf e -> 
+      check_msg_value_expr f e
+  | IfE (e1, e2, e3) -> 
+      (check_msg_value_expr f e1) >> (check_msg_value_expr f e2) >> (check_msg_value_expr f e3)
+      
+  | FunCall (e_to, _, e_val, e_args) -> 
+      (check_msg_value_expr f e_to) >> 
+      (check_msg_value_expr f e_val) >> 
+      List.fold_left (fun acc e -> acc >> (check_msg_value_expr f e)) (Ok ()) e_args
+  | _ -> Ok ()
+
+let rec check_msg_value_cmd f = function
+  | Skip -> Ok ()
+  
+  | Assign (_, e) | Req e | Decons (_, e) -> 
+      check_msg_value_expr f e
+      
+  | MapW (_, e_key, e_val) -> 
+      (check_msg_value_expr f e_key) >> (check_msg_value_expr f e_val)
+      
+  | Seq (c1, c2) | If (_, c1, c2) -> 
+      (check_msg_value_cmd f c1) >> (check_msg_value_cmd f c2)
+      
+  | Send (e_addr, e_amt) -> 
+      (check_msg_value_expr f e_addr) >> (check_msg_value_expr f e_amt)
+      
+  | Return el -> 
+      List.fold_left (fun acc e -> acc >> (check_msg_value_expr f e)) (Ok ()) el
+      
+  | Block (_, c) -> 
+      check_msg_value_cmd f c
+      
+  | ProcCall (e_to, _, e_val, e_args) ->
+      (check_msg_value_expr f e_to) >>
+      (check_msg_value_expr f e_val) >>
+      List.fold_left (fun acc e -> acc >> (check_msg_value_expr f e)) (Ok ()) e_args
+      
+  | _ -> Ok ()
+
+let rec check_read_expr f (state_vars : ide list) = function
+  | Var x -> 
+      if List.mem x state_vars then 
+        Error [MutabilityError (f, x, "cant read state variable in function pure")]
+      else Ok ()
+  | BlockNum -> Error [MutabilityError (f, "block.number", "cant access global state (block.number) in function pure")]
+  | This -> Error [MutabilityError (f, "this", "cant access global state (this) in function pure")]
+  | BalanceOf e -> 
+      (check_read_expr f state_vars e) >>
+      Error [MutabilityError (f, "balance", "cant access global state (balance) in function pure")]
+  | MapR (e1, e2) -> (check_read_expr f state_vars e1) >> (check_read_expr f state_vars e2)
+  | Not e | IntCast e | UintCast e | AddrCast e | PayableCast e | EnumCast (_, e) | ContractCast (_, e) | UnknownCast (_, e) -> 
+      check_read_expr f state_vars e
+  | And (e1, e2) | Or (e1, e2) | Add (e1, e2) | Sub (e1, e2) | Mul (e1, e2) | Div (e1, e2) 
+  | Eq (e1, e2) | Neq (e1, e2) | Leq (e1, e2) | Lt (e1, e2) | Geq (e1, e2) | Gt (e1, e2) -> 
+      (check_read_expr f state_vars e1) >> (check_read_expr f state_vars e2)
+  | IfE (e1, e2, e3) -> 
+      (check_read_expr f state_vars e1) >> (check_read_expr f state_vars e2) >> (check_read_expr f state_vars e3)
+  | FunCall (e_to, _, e_val, e_args) -> 
+      (check_read_expr f state_vars e_to) >> 
+      (check_read_expr f state_vars e_val) >> 
+      List.fold_left (fun acc e -> acc >> (check_read_expr f state_vars e)) (Ok ()) e_args
+  | _ -> Ok ()
+
+let rec check_read_cmd f (state_vars : ide list) = function
+  | Skip -> Ok ()
+  | Assign (_, e) -> check_read_expr f state_vars e
+  | Decons (_, e) -> check_read_expr f state_vars e
+  | MapW (_, e1, e2) -> (check_read_expr f state_vars e1) >> (check_read_expr f state_vars e2)
+  | Seq (c1, c2) -> (check_read_cmd f state_vars c1) >> (check_read_cmd f state_vars c2)
+  | If (e, c1, c2) -> (check_read_expr f state_vars e) >> (check_read_cmd f state_vars c1) >> (check_read_cmd f state_vars c2)
+  | Send (e1, e2) -> (check_read_expr f state_vars e1) >> (check_read_expr f state_vars e2)
+  | Req e -> check_read_expr f state_vars e
+  | Return el -> List.fold_left (fun acc e -> acc >> (check_read_expr f state_vars e)) (Ok ()) el
+  | Block (lvdl, c) ->
+      let local_names = List.map (fun v -> v.name) lvdl in
+      let filtered_state = List.filter (fun x -> not (List.mem x local_names)) state_vars in
+      check_read_cmd f filtered_state c
+  | ProcCall (e_to, _, e_val, e_args) ->
+      (check_read_expr f state_vars e_to) >>
+      (check_read_expr f state_vars e_val) >>
+      List.fold_left (fun acc e -> acc >> (check_read_expr f state_vars e)) (Ok ()) e_args
+  | _ -> Ok ()
+
+let rec check_write_cmd f (state_vars : ide list) = function
+  | Assign(x, _) -> 
+      if List.mem x state_vars then 
+        Error [MutabilityError (f, x, "cant modify state variable in function view/pure")]
+      else Ok ()
+  | MapW(x, _, _) -> 
+      if List.mem x state_vars then 
+        Error [MutabilityError (f, x, "cant modify state mapping in function view/pure")]
+      else Ok ()
+  | Seq(c1, c2) -> (check_write_cmd f state_vars c1) >> (check_write_cmd f state_vars c2)
+  | If(_, c1, c2) -> (check_write_cmd f state_vars c1) >> (check_write_cmd f state_vars c2)
+  | Send(_, _) -> Error [MutabilityError (f, "send", "cant transfer funds in function view/pure")]
+  | Block(lvdl, c) -> 
+      let local_names = List.map (fun v -> v.name) lvdl in
+      let filtered_state = List.filter (fun x -> not (List.mem x local_names)) state_vars in
+      check_write_cmd f filtered_state c
+  | _ -> Ok ()    
 
 let typecheck_fun (edl : enum_decl list) (vdl : var_decl list) = function
   | Constr (al,c,_) ->
@@ -471,12 +583,29 @@ let typecheck_fun (edl : enum_decl list) (vdl : var_decl list) = function
       typecheck_local_decls "constructor" al
       >> 
       typecheck_cmd "constructor" edl (merge_var_decls vdl al) c
-  | Proc (f,al,c,_,__,_) ->
+  | Proc (f,al,c,_,mut,_) ->
       no_dup_local_var_decls f al
       >> 
       typecheck_local_decls f al
       >>
       typecheck_cmd f edl (merge_var_decls vdl al) c
+      >>
+      (let state_vars = List.map (fun (v : var_decl) -> v.name) vdl in
+       let params = List.map (fun (v : local_var_decl) -> v.name) al in
+       let actual_state = List.filter (fun x -> not (List.mem x params)) state_vars in
+       
+       match mut with
+       | Pure -> 
+           check_write_cmd f actual_state c >>
+            check_read_cmd f actual_state c >>
+            check_msg_value_cmd f c
+       | View -> 
+           check_write_cmd f actual_state c >>
+           check_msg_value_cmd f c
+       | NonPayable ->
+           check_msg_value_cmd f c
+        | Payable -> Ok ()
+       )
 
 (* dup_first: finds the first duplicate in a list *)
 let rec dup_first (l : 'a list) : 'a option = match l with 
