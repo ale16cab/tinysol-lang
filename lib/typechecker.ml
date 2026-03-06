@@ -391,40 +391,9 @@ let typecheck_local_decls (f : ide) (vdl : local_var_decl list) = List.fold_left
     | _ -> acc)
   (Ok ())
   vdl
-
-(* let rec accede_expr (e : expr) (state_vars : ide list) : bool =
-  match e with
-  | Var x -> List.mem x state_vars
-  | MapR (e1, e2) -> accede_expr e1 state_vars || accede_expr e2 state_vars
-  | This | BlockNum | BalanceOf _ -> true
-  | Not e | IntCast e | UintCast e | AddrCast e | PayableCast e | EnumCast (_, e) | ContractCast (_, e) -> 
-      accede_expr e state_vars
-  | And (e1, e2) | Or (e1, e2) | Add (e1, e2) | Sub (e1, e2) | Mul (e1, e2) | Div (e1, e2) | Eq (e1, e2) | Neq (e1, e2) | Leq (e1, e2) | Lt (e1, e2) | Geq (e1, e2) | Gt (e1, e2) ->
-      accede_expr e1 state_vars || accede_expr e2 state_vars
-  | IfE (e1, e2, e3) -> accede_expr e1 state_vars || accede_expr e2 state_vars || accede_expr e3 state_vars
-  | FunCall (e_to, _, e_val, e_args) -> accede_expr e_to state_vars || accede_expr e_val state_vars || List.exists (fun e -> accede_expr e state_vars) e_args
-  | _ -> false
-
-  let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
-    let rec aux cmd state_vars =
-      match cmd with
-      | Skip -> false
-      | Assign (x, e) -> List.mem x state_vars || accede_expr e state_vars
-      | MapW (x, ek, ev) -> List.mem x state_vars || accede_expr ek state_vars || accede_expr ev state_vars
-      | Seq (c1, c2) -> aux c1 state_vars || aux c2 state_vars
-      | If (e, c1, c2) -> accede_expr e state_vars || aux c1 state_vars || aux c2 state_vars
-      | Send (ercv, eamt) -> accede_expr ercv state_vars || accede_expr eamt state_vars
-      | Req e -> accede_expr e state_vars
-      (* CASO RETURN ESPLICITO *)
-      | Return el -> List.exists (fun e -> accede_expr e state_vars) el
-      | Block (decls, c) ->
-          let local_vars = List.map (fun decl -> decl.name) decls in
-          let filtered_state_vars = List.filter (fun x -> not (List.mem x local_vars)) state_vars in
-          aux c filtered_state_vars
-      | _ -> false
-      in
-      let result = aux c state_vars in result *)
+  
 let check_inside (x : ide) (vdl : ide list) = List.mem x vdl
+
 let rec accede_expr (e : expr) (state_vars : ide list) : bool =
   match e with
   | Var x -> List.mem x state_vars
@@ -437,6 +406,7 @@ let rec accede_expr (e : expr) (state_vars : ide list) : bool =
   | IfE (e1, e2, e3) -> accede_expr e1 state_vars || accede_expr e2 state_vars || accede_expr e3 state_vars
   | FunCall (_) -> failwith "Not implemented yet"
   | _ -> false
+
 and accede_cmd (f : ide) (vdl : ide list) = function 
     Skip -> Ok()
   | Assign(x,e) -> if (check_inside x vdl || accede_expr e vdl) then Error [ImmutabilityError (f,x)] else Ok ()
@@ -448,6 +418,9 @@ and accede_cmd (f : ide) (vdl : ide list) = function
       let filtered_state_vars = List.filter (fun x -> not (List.mem x local_vars)) vdl in
       accede_cmd f filtered_state_vars c
   | _ -> Ok()
+
+and manage_payable = failwith "Not implemented yet";;
+
 let rec typecheck_cmd (f : ide) (edl : enum_decl list) (vdl : all_var_decls) = function 
     | Skip -> Ok ()
 
