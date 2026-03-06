@@ -88,13 +88,6 @@ let%test "test_mutability_3d" = test_exec_tx
   }"
   ["0xA:0xC.f(\"0xC\")"]
   [("this.balance==1");] 
-let%test "test_mutability_3e" = test_exec_tx 
-  "contract C { 
-    address a = \"0xC\";
-    function f() public pure returns(uint) { return ( a.balance + 100 ); }
-  }"
-  ["0xA:0xC.f()"]
-  [("a.balance>=0");] 
 (*
 let%test "test_mutability_4" = test_exec_tx
   "contract C {
@@ -160,50 +153,66 @@ let%test "test_typecheck_mutability_1" = test_typecheck
       uint x;
       function f() public { x = 1; }
   }"
-  true
+  true (* should pass, base case, non payable function that write the state*)
 
-(*
+
 let%test "test_typecheck_mutability_2" = test_typecheck
   "contract C {
       uint x;
       function f() public view { x = 1; }
   }"
   false (* f cannot be declared as view because it (potentially) modifies the state *)
-*)
-(*
+
 let%test "test_typecheck_mutability_3" = test_typecheck
   "contract C {
       uint x;
       function f(uint y) public pure { uint z; z = x*y; }
   }"
   false (* f cannot be declared as pure because it (potentially) depends on the state *)
-*)
-(*
+
 let%test "test_typecheck_mutability_4" = test_typecheck
   "contract C {
       uint x;
       function f(uint y) public pure { uint z; z = y*y; }
   }"
   true (* f is pure because it does not depend on the state *)
-*)
-(*
+
 let%test "test_typecheck_mutability_5" = test_typecheck
   "contract C {
     uint x;
     constructor() { x = 1; }
     function f() public { require(msg.value == 0); x = 2; }
   }"
-  false (* msg.value can only be used in payable functions *)
-*)
-(*
+  false (* msg.value can only be used in payable functions *) 
+
 let%test "test_typecheck_mutability_6" = test_typecheck
   "contract C {
     uint x;
     constructor() { x = 1; }
     function f() public payable { require(msg.value == 0); x = 2; }
   }"
-  true
-*)
+  true (* should pass payable and msg.value *)
+
+(* new tests for mutability check*)
+let%test "test_typecheck_mutability_7" = test_typecheck
+  "contract C {
+      uint x;
+      function f() public view { { uint x; x = 20;} }
+  }"
+  true (* view functions can modify local variables *)
+
+let%test "test_typecheck_mutability_7b" = test_typecheck
+  "contract C {
+      uint x;
+      function f() public view { { uint x; } x = 20; }
+  }"
+  false (* escape block before assign of a state variable *)
+
+let%test "test_typecheck_mutability_8" = test_typecheck
+  "contract C {
+      function f(address payable a) public view { a.transfer(1); }
+  }"
+  false (* view functions cannot call transfer *)
 (*
 let%test "test_typecheck_return_1" = test_typecheck
   "contract C {
