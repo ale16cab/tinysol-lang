@@ -393,7 +393,7 @@ let typecheck_local_decls (f : ide) (vdl : local_var_decl list) = List.fold_left
   vdl
   
 let check_inside (x : ide) (vdl : ide list) = List.mem x vdl
-
+let is_msgvalue (x : ide) (vdl : ide list) = x = "msg.value" && List.mem x vdl
 let rec accede_expr (e : expr) (state_vars : ide list) : bool =
   match e with
   | Var x -> List.mem x state_vars
@@ -406,7 +406,6 @@ let rec accede_expr (e : expr) (state_vars : ide list) : bool =
   | IfE (e1, e2, e3) -> accede_expr e1 state_vars || accede_expr e2 state_vars || accede_expr e3 state_vars
   | FunCall (_) -> failwith "Not implemented yet"
   | _ -> false
-
 and accede_cmd (f : ide) (vdl : ide list) = function 
     Skip -> Ok()
   | Assign(x,e) -> if (check_inside x vdl || accede_expr e vdl) then Error [ImmutabilityError (f,x)] else Ok ()
@@ -418,9 +417,10 @@ and accede_cmd (f : ide) (vdl : ide list) = function
       let filtered_state_vars = List.filter (fun x -> not (List.mem x local_vars)) vdl in
       accede_cmd f filtered_state_vars c
   | _ -> Ok()
-
-and manage_payable = failwith "Not implemented yet";;
-
+and manage_payable_expr (e : expr) (vdl : ide list) = match e with
+      Var x -> if is_msgvalue x vdl then failwith "Cannot access msg.value unless payable" else Ok ()
+    | _ -> Ok ()
+and manage_payable_cmd (f : ide) (vdl : ide list) = failwith "Not implemented yet" 
 let rec typecheck_cmd (f : ide) (edl : enum_decl list) (vdl : all_var_decls) = function 
     | Skip -> Ok ()
 
@@ -509,8 +509,7 @@ let typecheck_fun (edl : enum_decl list) (vdl : var_decl list) = function
       >>
       match m with 
         | View | Pure -> accede_cmd f (List.map (fun (vd: var_decl) -> vd.name) vdl) c
-        | Payable -> failwith "Not implemented yet"
-        | _ -> Ok()
+        | _ -> Ok ()
   
 
 (* dup_first: finds the first duplicate in a list *)
