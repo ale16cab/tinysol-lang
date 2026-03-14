@@ -44,12 +44,11 @@ let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
       | _ -> false
       in
       let result = aux c state_vars in result
-let assign_to_constants (c : cmd) (vrs : ide list) : bool = 
+let assign_to_variable (c : cmd) (vrs : ide list) : bool = 
   let rec aux cmd = match cmd with 
     Skip -> false
   | Assign (x,_) | MapW (x,_,_) -> List.mem x vrs
-  | Seq(c1,c2) -> aux c1 || aux c2
-  | If(e, c1, c2) -> accede_expr e vrs || aux c1 || aux c2
+  | Seq(c1,c2) | If(_, c1, c2) -> aux c1 || aux c2
   | _ -> false in aux c
 let rec step_expr (e,st) = match e with
   | e when is_val e -> raise NoRuleApplies
@@ -294,11 +293,11 @@ let rec step_expr (e,st) = match e with
       | Some src ->
         let state_vars = get_state_variables src in
         let consts = get_var_by_mutability Constant src in
-        let immutable = get_var_by_mutability Immutable src in
+        (* let immutable = get_var_by_mutability Immutable src in *)
         (match fdecl with
           | Proc(_,_,c,_,Pure,_) when accede_allo_stato c state_vars ->
             failwith "Reverted: Pure function cannot access state"
-          | Proc(_,_,c,_,_,_) when assign_to_constants c consts -> 
+          | Proc(_,_,c,_,_,_) when assign_to_variable c consts -> 
             failwith "Reverted: Cannot assign to constants"
           | _ -> ())
       | None -> ());
@@ -484,7 +483,7 @@ and step_cmd = function
           | Some src -> 
             let constants = get_var_by_mutability Constant src in 
             (match fdecl with 
-                Proc(_,_,c,_,_,_) -> assign_to_constants c constants
+                Proc(_,_,c,_,_,_) -> assign_to_variable c constants
               | _ -> false)
           | None -> false 
         in

@@ -96,6 +96,13 @@ let%test "test_issue11a" = test_exec_tx
   }"
   ["0xA:0xC.f(0)"]
   [("N==0");]
+let%test "test_issue11b" = test_exec_tx
+  "contract C {
+    int constant N=0;
+    function f() external returns(int) { N+=1; }
+  }"
+  ["0xA:0xC.f()"]
+  [("N==1");]
 
 (*
 let%test "test_mutability_4" = test_exec_tx
