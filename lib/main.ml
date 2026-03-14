@@ -9,9 +9,10 @@ open Utils
 
 exception TypeError of string
 exception NoRuleApplies
-let get_state_variables (Contract(_,_,vdl,_)) : string list =
+let get_state_variables (Contract(_,_,vdl,_)) : ide list =
   let state_vars = List.map (fun (vd : var_decl) -> vd.name) vdl in state_vars
-
+let get_var_by_mutability (m : var_mutability_t) (Contract(_,_,vdl,_)) : ide list = 
+  let constants = vdl |> List.filter (fun (vd : var_decl) -> vd.mutability = m) |> List.map (fun (vd : var_decl) -> vd.name) in constants
 let rec accede_expr (e : expr) (state_vars : ide list) : bool =
   match e with
   | Var x -> List.mem x state_vars
@@ -24,8 +25,7 @@ let rec accede_expr (e : expr) (state_vars : ide list) : bool =
   | IfE (e1, e2, e3) -> accede_expr e1 state_vars || accede_expr e2 state_vars || accede_expr e3 state_vars
   | FunCall (e_to, _, e_val, e_args) -> accede_expr e_to state_vars || accede_expr e_val state_vars || List.exists (fun e -> accede_expr e state_vars) e_args
   | _ -> false
-
-  let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
+let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
     let rec aux cmd state_vars =
       match cmd with
       | Skip -> false
@@ -44,8 +44,13 @@ let rec accede_expr (e : expr) (state_vars : ide list) : bool =
       | _ -> false
       in
       let result = aux c state_vars in result
-
-  
+let assign_to_constants (c : cmd) (vrs : ide list) : bool = 
+  let rec aux cmd = match cmd with 
+    Skip -> false
+  | Assign (x,_) | MapW (x,_,_) -> List.mem x vrs
+  | Seq(c1,c2) -> aux c1 || aux c2
+  | If(e, c1, c2) -> accede_expr e vrs || aux c1 || aux c2
+  | _ -> false in aux c
 let rec step_expr (e,st) = match e with
   | e when is_val e -> raise NoRuleApplies
 
@@ -288,9 +293,13 @@ let rec step_expr (e,st) = match e with
     (match to_state.code with
       | Some src ->
         let state_vars = get_state_variables src in
+        let consts = get_var_by_mutability Constant src in
+        let immutable = get_var_by_mutability Immutable src in
         (match fdecl with
           | Proc(_,_,c,_,Pure,_) when accede_allo_stato c state_vars ->
             failwith "Reverted: Pure function cannot access state"
+          | Proc(_,_,c,_,_,_) when assign_to_constants c consts -> 
+            failwith "Reverted: Cannot assign to constants"
           | _ -> ())
       | None -> ());
     (* setup new callstack frame *)
@@ -470,9 +479,20 @@ and step_cmd = function
               | _ -> false)
           | None -> false
         in
+        let is_constant_assigned = 
+            match to_state.code with 
+          | Some src -> 
+            let constants = get_var_by_mutability Constant src in 
+            (match fdecl with 
+                Proc(_,_,c,_,_,_) -> assign_to_constants c constants
+              | _ -> false)
+          | None -> false 
+        in
         if is_pure_accessing_state then
           Reverted "Reverted: Pure function cannot access state"
-        else
+        else if is_constant_assigned then 
+          Reverted "Reverted: Constant variables cannot be assigned"
+        else 
         (* setup new stack frame TODO *)
         let xl = get_var_decls_from_fun fdecl in
         let xl',vl' =
