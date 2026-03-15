@@ -9,10 +9,10 @@ open Utils
 
 exception TypeError of string
 exception NoRuleApplies
+
+(* Issue 4: dichiarazioni*)
 let get_state_variables (Contract(_,_,vdl,_)) : ide list =
   let state_vars = List.map (fun (vd : var_decl) -> vd.name) vdl in state_vars
-let get_var_by_mutability (m : var_mutability_t) (Contract(_,_,vdl,_)) : ide list = 
-  let constants = vdl |> List.filter (fun (vd : var_decl) -> vd.mutability = m) |> List.map (fun (vd : var_decl) -> vd.name) in constants
 let rec accede_expr (e : expr) (state_vars : ide list) : bool =
   match e with
   | Var x -> List.mem x state_vars
@@ -44,12 +44,18 @@ let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
       | _ -> false
       in
       let result = aux c state_vars in result
+(* ISSUE 11: dichiarazioni *)
+let get_var_by_mutability (m : var_mutability_t) (Contract(_,_,vdl,_)) : ide list = (* Constant/Immutable control *)
+  vdl |> List.filter (fun (vd : var_decl) -> vd.mutability = m) |> List.map (fun (vd : var_decl) -> vd.name) 
 let assign_to_variable (c : cmd) (vrs : ide list) : bool = 
   let rec aux cmd = match cmd with 
     Skip -> false
   | Assign (x,_) | MapW (x,_,_) -> List.mem x vrs
-  | Seq(c1,c2) | If(_, c1, c2) -> aux c1 || aux c2
+  | Seq(c1,c2) -> aux c1 || aux c2
+  | If(_, c1, c2) -> aux c1 || aux c2
+  | Block(_,c) -> aux c
   | _ -> false in aux c
+
 let rec step_expr (e,st) = match e with
   | e when is_val e -> raise NoRuleApplies
 
@@ -293,12 +299,15 @@ let rec step_expr (e,st) = match e with
       | Some src ->
         let state_vars = get_state_variables src in
         let consts = get_var_by_mutability Constant src in
+        let immutables = get_var_by_mutability Immutable src in
         (* let immutable = get_var_by_mutability Immutable src in *)
         (match fdecl with
           | Proc(_,_,c,_,Pure,_) when accede_allo_stato c state_vars ->
             failwith "Reverted: Pure function cannot access state"
           | Proc(_,_,c,_,_,_) when assign_to_variable c consts -> 
             failwith "Reverted: Cannot assign to constants"
+          | Proc(_,_,c,_,_,_) when assign_to_variable c immutables -> 
+            failwith "Reverted: Only constructors are allowed to assign immutable variables"
           | _ -> ())
       | None -> ());
     (* setup new callstack frame *)
