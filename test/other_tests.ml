@@ -111,7 +111,31 @@ let%test "test_issue11c" = test_exec_tx
   }"
   ["0xA:0xC.f(0)"]
   [("N==1");]
+let%test "test_constant_1" = test_exec_tx
+  "contract C {
+      int constant x = 1;
+      function f() public { x = 2; }
+  }"
+  ["0xA:0xC.f()"] 
+  [("x==1");] (*should be reverted *) 
 
+let%test "test_immutable_1" = test_exec_tx
+  "contract C {
+      int immutable x;
+      constructor() { x = 1; }
+      function f() public { x = 2; }
+  }"
+  ["0xA:0xC.f()"] 
+  [("x==1");] (* should be reverted *)
+
+let%test "test_immutable_2" = test_exec_tx
+  "contract C {
+      int immutable x;
+      constructor() { x = 1; }
+      function f() public { int x; x = 2; }
+  }"
+  ["0xA:0xC.f()"] 
+  [("x==1");]
 (*
 let%test "test_mutability_4" = test_exec_tx
   "contract C {

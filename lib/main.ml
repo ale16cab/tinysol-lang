@@ -47,7 +47,7 @@ let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
 (* ISSUE 11: dichiarazioni *)
 let get_var_by_mutability (m : var_mutability_t) (Contract(_,_,vdl,_)) : ide list = (* Constant/Immutable control *)
   vdl |> List.filter (fun (vd : var_decl) -> vd.mutability = m) |> List.map (fun (vd : var_decl) -> vd.name) 
-let assign_to_variable (c : cmd) (vrs : ide list) : bool = 
+and assign_to_variable (c : cmd) (vrs : ide list) : bool = 
   let rec aux cmd = match cmd with 
     Skip -> false
   | Assign (x,_) | MapW (x,_,_) -> List.mem x vrs
@@ -300,11 +300,10 @@ let rec step_expr (e,st) = match e with
         let state_vars = get_state_variables src in
         let consts = get_var_by_mutability Constant src in
         let immutables = get_var_by_mutability Immutable src in
-        (* let immutable = get_var_by_mutability Immutable src in *)
         (match fdecl with
           | Proc(_,_,c,_,Pure,_) when accede_allo_stato c state_vars ->
             failwith "Reverted: Pure function cannot access state"
-          | Proc(_,_,c,_,_,_) when assign_to_variable c consts -> 
+          | Proc(_,_,c,_,_,_) | Constr(_,c,_) when assign_to_variable c consts -> 
             failwith "Reverted: Cannot assign to constants"
           | Proc(_,_,c,_,_,_) when assign_to_variable c immutables -> 
             failwith "Reverted: Only constructors are allowed to assign immutable variables"
@@ -491,8 +490,15 @@ and step_cmd = function
             match to_state.code with 
           | Some src -> 
             let constants = get_var_by_mutability Constant src in 
+            (match fdecl with _ -> assign_to_variable c constants)
+          | None -> false 
+        in
+        let is_immutable_assigned = 
+            match to_state.code with 
+          | Some src -> 
+            let ims = get_var_by_mutability Immutable src in 
             (match fdecl with 
-                Proc(_,_,c,_,_,_) -> assign_to_variable c constants
+                Proc(_,_,c,_,_,_) -> assign_to_variable c ims
               | _ -> false)
           | None -> false 
         in
@@ -500,6 +506,8 @@ and step_cmd = function
           Reverted "Reverted: Pure function cannot access state"
         else if is_constant_assigned then 
           Reverted "Reverted: Constant variables cannot be assigned"
+        else if is_immutable_assigned then
+          Reverted "Reverted: Only constructors are allowed to assign immutable variables"
         else 
         (* setup new stack frame TODO *)
         let xl = get_var_decls_from_fun fdecl in
