@@ -337,7 +337,7 @@ let%test "test_typecheck_constant_4" = test_typecheck
     function f(int n) external { }
   }"
   false (* constant variables must be initialized *)
-
+*)
 let%test "test_constant_1" = test_exec_tx
   "contract C {
       int constant x = 1;
