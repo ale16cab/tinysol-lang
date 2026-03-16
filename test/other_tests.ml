@@ -308,34 +308,58 @@ let%test "test_typecheck_constant_1" = test_typecheck
     constructor() { } 
     function f(int n) external { }
   }"
-  true
-*)
-(*
+  true (* should pass *)
+
+
 let%test "test_typecheck_constant_2" = test_typecheck
   "contract C {
     int constant N=1;
     constructor() { } 
     function f(int n) external { N=2; }
   }"
-  false
-*)
+  false (* constant variables cannot be reassigned *)
 
-(*
+
+
 let%test "test_typecheck_constant_3" = test_typecheck
   "contract C {
     int constant N=1;
     constructor() { N=2; } 
     function f(int n) external { }
   }"
-  false
-*)
+  false (* constant variables cannot be reassigned, even in the constructor *)
 
-(*
+
 let%test "test_typecheck_constant_4" = test_typecheck
   "contract C {
     int constant N;
     constructor() { } 
     function f(int n) external { }
   }"
-  false
-*)
+  false (* constant variables must be initialized *)
+
+let%test "test_constant_1" = test_exec_tx
+  "contract C {
+      int constant x = 1;
+      function f() public { x = 2; }
+  }"
+  ["0xA:0xC.f()"] 
+  ["x==1"] (*should be reverted *) 
+
+let%test "test_immutable_1" = test_exec_tx
+  "contract C {
+      int immutable x;
+      constructor() { x = 1; }
+      function f() public { x = 2; }
+  }"
+  ["0xA:0xC.f()"] 
+  ["x==1"] (* should be reverted *)
+
+let%test "test__immutable_2" = test_exec_tx
+  "contract C {
+      int immutable x;
+      constructor() { x = 1; }
+      function f() public { {int x; x = 2;} }
+  }"
+  ["0xA:0xC.f()"] 
+  ["x==1"]

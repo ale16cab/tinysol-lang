@@ -2,15 +2,23 @@ open Ast
 open Sysstate
 open Utils
 
-
 (******************************************************************************)
 (*                      Small-step semantics of expressions                   *)
 (******************************************************************************)
-
 exception TypeError of string
 exception NoRuleApplies
 let get_state_variables (Contract(_,_,vdl,_)) : string list =
   let state_vars = List.map (fun (vd : var_decl) -> vd.name) vdl in state_vars
+
+let get_constant_variables (Contract(_,_,vdl,_)) : string list =
+  vdl 
+  |> List.filter (fun (vd : var_decl) -> vd.mutability = Constant) 
+  |> List.map (fun (vd : var_decl) -> vd.name)
+
+let get_immutable_variables (Contract(_,_,vdl,_)) : string list =
+  vdl 
+  |> List.filter (fun (vd : var_decl) -> vd.mutability = Immutable) 
+  |> List.map (fun (vd : var_decl) -> vd.name)
 
 let rec accede_expr (e : expr) (state_vars : ide list) : bool =
   match e with
@@ -45,7 +53,6 @@ let rec accede_expr (e : expr) (state_vars : ide list) : bool =
       in
       let result = aux c state_vars in result
 
-  
 let rec step_expr (e,st) = match e with
   | e when is_val e -> raise NoRuleApplies
 
@@ -343,11 +350,9 @@ and step_expr_list (el, st) = match el with
   | e::tl -> 
     let (e',st') = step_expr (e, st) in (e'::tl, st')
 
-
 (******************************************************************************)
 (*                       Small-step semantics of commands                     *)
 (******************************************************************************)
-
 and step_cmd = function
     St _ -> raise NoRuleApplies
 
@@ -360,7 +365,28 @@ and step_cmd = function
     | Skip -> St st
 
     | Assign(x,e) when is_val e -> 
-        St (update_var st x (exprval_of_expr_typechecked e (type_of_var x st)))
+        let fr = List.hd st.callstack in
+        (match lookup_locals x fr.locals with
+        | Some _ ->  St (update_var st x (exprval_of_expr_typechecked e (type_of_var x st)))
+        | None ->
+            let cs = st.accounts fr.callee in
+            (match cs.code with
+            | Some c ->
+                let imm_vars = get_immutable_variables c in
+                let const_vars = get_constant_variables c in
+                if List.mem x const_vars then
+                  Reverted ("Cannot assign to constant state variable " ^ x)
+                else if List.mem x imm_vars then
+                  (match lookup_locals "@constructor" fr.locals with
+                   | Some (Bool true) -> St (update_var st x (exprval_of_expr_typechecked e (type_of_var x st)))
+                   | _ -> Reverted ("Cannot assign to immutable state variable " ^ x ^ " outside constructor")
+                  )
+                else
+                  St (update_var st x (exprval_of_expr_typechecked e (type_of_var x st)))
+            | None ->
+                St (update_var st x (exprval_of_expr_typechecked e (type_of_var x st)))
+            )
+        )
         
     | Assign(x,e) -> 
       let (e', st') = step_expr (e, st) in CmdSt(Assign(x,e'), st')
@@ -368,7 +394,29 @@ and step_cmd = function
     | Decons(_) -> failwith "TODO: multiple return values"
 
     | MapW(x,ek,ev) when is_val ek && is_val ev ->
-        St (update_map st x (exprval_of_expr ek) (exprval_of_expr ev))
+      let fr = List.hd st.callstack in
+        (match lookup_locals x fr.locals with
+        | Some _ -> St (update_map st x (exprval_of_expr ek) (exprval_of_expr ev))
+        | None ->
+            let cs = st.accounts fr.callee in
+            (match cs.code with
+            | Some c ->
+                let imm_vars = get_immutable_variables c in
+                let const_vars = get_constant_variables c in
+                if List.mem x const_vars then
+                  Reverted ("Cannot write to constant state mapping " ^ x)
+                else if List.mem x imm_vars then
+                  (match lookup_locals "@constructor" fr.locals with
+                   | Some (Bool true) -> St (update_map st x (exprval_of_expr ek) (exprval_of_expr ev))
+                   | _ -> Reverted ("Cannot write to immutable state mapping " ^ x ^ " outside constructor")
+                  )
+                else
+                  St (update_map st x (exprval_of_expr ek) (exprval_of_expr ev))
+            | None -> 
+                St (update_map st x (exprval_of_expr ek) (exprval_of_expr ev))
+            )
+        )
+    
     | MapW(x,ek,ev) when is_val ek -> 
       let (ev', st') = step_expr (ev, st) in 
       CmdSt(MapW(x,ek,ev'), st')
@@ -563,11 +611,9 @@ let trace_cmd n_steps (c:cmd) (st : sysstate) : exec_state list =
       with NoRuleApplies -> [t]
   in trace_rec_cmd n_steps (CmdSt(c,st))
 
-
 (******************************************************************************)
 (* Funds an account in a system state. Creates account if it does not exist   *)
 (******************************************************************************)
-
 let faucet (a : addr) (n : int) (st : sysstate) : sysstate = 
   if exists_account st a then 
     let as' = { (st.accounts a) with balance = n + (st.accounts a).balance } in
@@ -576,14 +622,9 @@ let faucet (a : addr) (n : int) (st : sysstate) : sysstate =
     let as' = { balance = n; storage = botenv; code = None; } in
     { st with accounts = bind a as' st.accounts; active = a::st.active }
 
-
-
-
-
 (******************************************************************************)
 (* Executes steps of a transaction in a system state, returning a trace       *)
 (******************************************************************************)
-
 let exec_tx (n_steps : int) (tx: transaction) (st : sysstate) : (sysstate,string) result =
   if tx.txvalue < 0 then
     Error ("trying to send a negative amount of tokens")
@@ -651,7 +692,12 @@ let exec_tx (n_steps : int) (tx: transaction) (st : sysstate) : (sysstate,string
               { ty=VarT(UintBT); name="msg.value"; } :: xl,
               Addr tx.txsender :: Uint tx.txvalue :: tx.txargs
           in
-          let fr' = { callee = tx.txto; locals = [bind_fargs_aargs xl' vl'] } in
+          let initial_env = bind_fargs_aargs xl' vl' in
+          let env_with_flag = 
+            if deploy then bind "@constructor" (Bool true) initial_env 
+            else initial_env 
+          in
+          let fr' = { callee = tx.txto; locals = [env_with_flag] } in
           let st' = { accounts = st.accounts 
                         |> bind tx.txsender sender_state
                         |> bind tx.txto to_state; 
