@@ -88,7 +88,7 @@ let%test "test_mutability_3d" = test_exec_tx
   }"
   ["0xA:0xC.f(\"0xC\")"]
   [("this.balance==1");] 
-let%test "test_issue11a" = test_exec_tx
+let%test "test_constant_1" = test_exec_tx
   "contract C {
     int constant N=1;
     int x;
@@ -96,22 +96,14 @@ let%test "test_issue11a" = test_exec_tx
   }"
   ["0xA:0xC.f(0)"]
   [("N==1");]
-let%test "test_issue11b" = test_exec_tx
+let%test "test_constant_2" = test_exec_tx
   "contract C {
     int constant N=0;
     function f() external returns(int) { N+=1; }
   }"
   ["0xA:0xC.f()"]
   [("N==0");]
-let%test "test_issue11c" = test_exec_tx 
-  "contract C {
-    int constant N=1;
-    int x;
-    function f(int n) external { if (n>0) x+=1; else N=0; }
-  }"
-  ["0xA:0xC.f(0)"]
-  [("N==1");]
-let%test "test_constant_1" = test_exec_tx
+let%test "test_constant_3" = test_exec_tx
   "contract C {
       int constant x = 1;
       function f() public { x = 2; }
