@@ -9,9 +9,10 @@ open Utils
 
 exception TypeError of string
 exception NoRuleApplies
-let get_state_variables (Contract(_,_,vdl,_)) : string list =
-  let state_vars = List.map (fun (vd : var_decl) -> vd.name) vdl in state_vars
 
+(* Issue 4: dichiarazioni*)
+let get_state_variables (Contract(_,_,vdl,_)) : ide list =
+  let state_vars = List.map (fun (vd : var_decl) -> vd.name) vdl in state_vars
 let rec accede_expr (e : expr) (state_vars : ide list) : bool =
   match e with
   | Var x -> List.mem x state_vars
@@ -24,8 +25,7 @@ let rec accede_expr (e : expr) (state_vars : ide list) : bool =
   | IfE (e1, e2, e3) -> accede_expr e1 state_vars || accede_expr e2 state_vars || accede_expr e3 state_vars
   | FunCall (e_to, _, e_val, e_args) -> accede_expr e_to state_vars || accede_expr e_val state_vars || List.exists (fun e -> accede_expr e state_vars) e_args
   | _ -> false
-
-  let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
+let accede_allo_stato (c : cmd) (state_vars : ide list) : bool =
     let rec aux cmd state_vars =
       match cmd with
       | Skip -> false
@@ -44,8 +44,21 @@ let rec accede_expr (e : expr) (state_vars : ide list) : bool =
       | _ -> false
       in
       let result = aux c state_vars in result
+(* ISSUE 11: dichiarazioni *)
+let get_var_by_mutability (m : var_mutability_t) (Contract(_,_,vdl,_)) : ide list = (* Constant/Immutable control *)
+  vdl |> List.filter (fun (vd : var_decl) -> vd.mutability = m) |> List.map (fun (vd : var_decl) -> vd.name) 
+let rec assign_to_variable (c : cmd) (vrs : ide list) : bool = 
+  match c with 
+    Skip -> false
+  | Assign (x,_) | MapW (x,_,_) -> List.mem x vrs
+  | Seq(c1,c2) -> assign_to_variable c1 vrs || assign_to_variable c2 vrs
+  | If(_, c1, c2) -> assign_to_variable c1 vrs || assign_to_variable c2 vrs
+  | Block(vdl,c) ->
+    let local_vars = List.map(fun vd -> vd.name) vdl in
+    let filtered_vars = List.filter (fun x -> not (List.mem x local_vars)) vrs in
+    assign_to_variable c filtered_vars
+  | _ -> false
 
-  
 let rec step_expr (e,st) = match e with
   | e when is_val e -> raise NoRuleApplies
 
@@ -288,9 +301,15 @@ let rec step_expr (e,st) = match e with
     (match to_state.code with
       | Some src ->
         let state_vars = get_state_variables src in
+        let consts = get_var_by_mutability Constant src in
+        let immutables = get_var_by_mutability Immutable src in
         (match fdecl with
           | Proc(_,_,c,_,Pure,_) when accede_allo_stato c state_vars ->
             failwith "Reverted: Pure function cannot access state"
+          | Proc(_,_,c,_,_,_) | Constr(_,c,_) when assign_to_variable c consts -> 
+            failwith "Reverted: Cannot assign to constants"
+          | Proc(_,_,c,_,_,_) when assign_to_variable c immutables -> 
+            failwith "Reverted: Only constructors are allowed to assign immutable variables"
           | _ -> ())
       | None -> ());
     (* setup new callstack frame *)
@@ -470,9 +489,29 @@ and step_cmd = function
               | _ -> false)
           | None -> false
         in
+        let is_constant_assigned = 
+            match to_state.code with 
+          | Some src -> 
+            let constants = get_var_by_mutability Constant src in 
+            (match fdecl with _ -> assign_to_variable c constants)
+          | None -> false 
+        in
+        let is_immutable_assigned = 
+            match to_state.code with 
+          | Some src -> 
+            let ims = get_var_by_mutability Immutable src in 
+            (match fdecl with 
+                Proc(_,_,c,_,_,_) -> assign_to_variable c ims
+              | _ -> false)
+          | None -> false 
+        in
         if is_pure_accessing_state then
           Reverted "Reverted: Pure function cannot access state"
-        else
+        else if is_constant_assigned then 
+          Reverted "Reverted: Constant variables cannot be assigned"
+        else if is_immutable_assigned then
+          Reverted "Reverted: Only constructors are allowed to assign immutable variables"
+        else 
         (* setup new stack frame TODO *)
         let xl = get_var_decls_from_fun fdecl in
         let xl',vl' =
@@ -576,10 +615,6 @@ let faucet (a : addr) (n : int) (st : sysstate) : sysstate =
     let as' = { balance = n; storage = botenv; code = None; } in
     { st with accounts = bind a as' st.accounts; active = a::st.active }
 
-
-
-
-
 (******************************************************************************)
 (* Executes steps of a transaction in a system state, returning a trace       *)
 (******************************************************************************)
@@ -631,7 +666,14 @@ let exec_tx (n_steps : int) (tx: transaction) (st : sysstate) : (sysstate,string
             active = tx.txto :: st.active }
       | Some (Proc(_,xl,c,_,m,_))
       | Some (Constr(xl,c,m)) ->
-        if m = Pure && accede_allo_stato c state_vars then
+        let constants = get_var_by_mutability Constant src in
+        let immutables = get_var_by_mutability Immutable src in
+
+        if assign_to_variable c constants then 
+          Error "Reverted: Cannot assign to constant variables"
+        else if (not deploy) && assign_to_variable c immutables then
+          Error "Reverted: Only constructors are allowed to assign immutable variables"
+        else if m = Pure && accede_allo_stato c state_vars then
           Error "Reverted: Pure function cannot access state variables"
         else if m<>Payable && tx.txvalue>0 then 
             Error "sending ETH to a non-payable function"

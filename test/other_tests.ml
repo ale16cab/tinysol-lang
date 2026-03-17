@@ -88,6 +88,47 @@ let%test "test_mutability_3d" = test_exec_tx
   }"
   ["0xA:0xC.f(\"0xC\")"]
   [("this.balance==1");] 
+let%test "test_constant_1" = test_exec_tx
+  "contract C {
+    int constant N=1;
+    int x;
+    function f(int n) external { if (n>0) x+=1; else N=0; }
+  }"
+  ["0xA:0xC.f(0)"]
+  [("N==1");]
+let%test "test_constant_2" = test_exec_tx
+  "contract C {
+    int constant N=0;
+    function f() external returns(int) { N+=1; }
+  }"
+  ["0xA:0xC.f()"]
+  [("N==0");]
+let%test "test_constant_3" = test_exec_tx
+  "contract C {
+      int constant x = 1;
+      function f() public { x = 2; }
+  }"
+  ["0xA:0xC.f()"] 
+  [("x==1");] (*should be reverted *) 
+
+let%test "test_immutable_1" = test_exec_tx
+  "contract C {
+      int immutable x;
+      constructor() { x = 1; }
+      function f() public { x = 2; }
+  }"
+  ["0xA:0xC.f()"] 
+  [("x==1");] (* should be reverted *)
+
+let%test "test_immutable_2" = test_exec_tx
+  "contract C {
+      int immutable x;
+      int y;
+      constructor() { x = 1; }
+      function f() public { int x; x = 2; y= x; }
+  }"
+  ["0xA:0xC.f()"] 
+  ["x==1"; "y==2"]
 (*
 let%test "test_mutability_4" = test_exec_tx
   "contract C {
