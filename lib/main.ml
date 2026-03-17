@@ -298,18 +298,17 @@ let rec step_expr (e,st) = match e with
     let to_state  = 
       { (st.accounts txto) with balance = (st.accounts txto).balance + txvalue } in 
     let fdecl = Option.get (find_fun_in_sysstate st txto f) in  
-    let body = get_cmd_from_fun fdecl in
     (match to_state.code with
       | Some src ->
         let state_vars = get_state_variables src in
         let consts = get_var_by_mutability Constant src in
         let immutables = get_var_by_mutability Immutable src in
         (match fdecl with
-          | Proc(_,_,_,_,Pure,_) when accede_allo_stato body state_vars ->
+          | Proc(_,_,c,_,Pure,_) when accede_allo_stato c state_vars ->
             failwith "Reverted: Pure function cannot access state"
-          | Proc(_,_,_,_,_,_) | Constr(_,_,_) when assign_to_variable body consts -> 
+          | Proc(_,_,c,_,_,_) | Constr(_,c,_) when assign_to_variable c consts -> 
             failwith "Reverted: Cannot assign to constants"
-          | Proc(_,_,_,_,_,_) when assign_to_variable body immutables -> 
+          | Proc(_,_,c,_,_,_) when assign_to_variable c immutables -> 
             failwith "Reverted: Only constructors are allowed to assign immutable variables"
           | _ -> ())
       | None -> ());
@@ -481,13 +480,12 @@ and step_cmd = function
         let to_state  = 
           { (st.accounts txto) with balance = (st.accounts txto).balance + txvalue } in 
         let fdecl = Option.get (find_fun_in_sysstate st txto f) in  
-        let body = get_cmd_from_fun fdecl in
         let is_pure_accessing_state = 
           match to_state.code with
           | Some src ->
             let state_vars = get_state_variables src in
             (match fdecl with
-              | Proc(_, _, _, _, Pure, _) -> accede_allo_stato body state_vars
+              | Proc(_, _, c, _, Pure, _) -> accede_allo_stato c state_vars
               | _ -> false)
           | None -> false
         in
@@ -495,7 +493,7 @@ and step_cmd = function
             match to_state.code with 
           | Some src -> 
             let constants = get_var_by_mutability Constant src in 
-            (match fdecl with _ -> assign_to_variable body constants)
+            (match fdecl with _ -> assign_to_variable c constants)
           | None -> false 
         in
         let is_immutable_assigned = 
@@ -503,7 +501,7 @@ and step_cmd = function
           | Some src -> 
             let ims = get_var_by_mutability Immutable src in 
             (match fdecl with 
-                Proc(_,_,_,_,_,_) -> assign_to_variable body ims
+                Proc(_,_,c,_,_,_) -> assign_to_variable c ims
               | _ -> false)
           | None -> false 
         in
