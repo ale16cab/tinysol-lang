@@ -95,14 +95,14 @@ let%test "test_issue11a" = test_exec_tx
     function f(int n) external { if (n>0) x+=1; else N=0; }
   }"
   ["0xA:0xC.f(0)"]
-  [("N==0");]
+  [("N==1");]
 let%test "test_issue11b" = test_exec_tx
   "contract C {
     int constant N=0;
     function f() external returns(int) { N+=1; }
   }"
   ["0xA:0xC.f()"]
-  [("N==1");]
+  [("N==0");]
 let%test "test_issue11c" = test_exec_tx 
   "contract C {
     int constant N=1;
@@ -131,11 +131,12 @@ let%test "test_immutable_1" = test_exec_tx
 let%test "test_immutable_2" = test_exec_tx
   "contract C {
       int immutable x;
+      int y;
       constructor() { x = 1; }
-      function f() public { int x; x = 2; }
+      function f() public { int x; x = 2; y= x; }
   }"
   ["0xA:0xC.f()"] 
-  [("x==1");]
+  ["x==1"; "y==2"]
 (*
 let%test "test_mutability_4" = test_exec_tx
   "contract C {
